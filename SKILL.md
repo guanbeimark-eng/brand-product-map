@@ -5,7 +5,7 @@ description: >
   并新建一篇独立飞书文档、内嵌一张自上而下曲线连线的产品分布画板（根节点=品牌名居中置顶，按品类分列，
   每款产品卡片带高清主图+规格+价格+月销量+评分）。适用于"整理某品牌在售产品""做个产品分布图/产品墙/
   产品架构图""按品牌出Excel并配套在线画板""把Base里某品牌产品可视化"等任务。
-  明确区分同Base内的不同子品牌（如EnaSkin vs Enaskin Naturals）。
+  明确区分同Base内的不同子品牌（如EnaSkin vs Enaskin Naturals）。触发词包括品牌产品清单、Base在售产品、产品墙、产品架构图、产品分布图、品牌Excel和在线画板；不适用于竞品调研、外部爬虫、单纯Excel格式编辑、无Base来源的臆测清单或已有画板的无关设计修改。
 ---
 
 # Brand Product Map（品牌产品调研 + 在线分布图）
@@ -18,7 +18,11 @@ description: >
   2. 一篇新建的独立飞书文档，内嵌一块画板：品牌根节点居中置顶 → 曲线连到各品类列 → 每款产品一张带图卡片。
 - **不做**：不覆写已有画板；不替用户判断"哪些产品该上画板"（默认全部在售，数量极多时先问）；不做竞品/外部爬取。
 
-## 总流程（8 步）
+## 总流程（8 步，带 checkpoint）
+
+每一步完成后写入 `checkpoints/<step>.done.json`，记录输入、输出和时间；恢复时从最近的未完成步骤继续。任何外部写入前都必须有本地可核对产物。
+
+**STOP 标记**：认证/权限/CAPTCHA/限流、Base/Docs/Whiteboard 返回错误、分页响应形状未知、记录数突变、目标文档或画板已存在、图片 token 域不正确时立即停止；保留产物与 checkpoint，报告最后成功步骤和恢复命令，禁止用空数据继续。
 
 1. **解析 Base**：`lark-cli base +url-resolve --url "<base_url>" --as user`，拿到 `base_token` / `table_id` / `view_id`。
 2. **按品牌分页拉全量**：`lark-cli base +record-list`，`--filter-json` 按品牌字段筛，`--limit 200 --offset <n>` 直到 `has_more=false`。投影列用 field_id，**不要凭列位置对齐**。
@@ -44,10 +48,10 @@ description: >
 
 | 脚本 | 作用 | 关键参数 |
 |---|---|---|
-| `pull_base.py` | 按品牌从 Base 分页拉全量在售记录，落 `raw.json` | base_url, brand_field, brand_value, status_filter |
+| `pull_base.py` | 按品牌从 Base 分页拉全量在售记录，落 `raw.json` 并逐页 checkpoint | base-url, brand-field, brand-value, status-field, field-id-list |
 | `build_excel.py` | 规整后产 `.xlsx`（主表+口径说明），列结构固定 | input_rows.json, output.xlsx, brand_name |
 | `download_images.py` | Amazon URL 高清化批量下载到 `images/` | rows.json, out_dir |
-| `upload_to_board.py` | 逐张 `docs +media-upload` 到目标画板，落 `token_map.json` | images_dir, board_token |
+| `upload_to_board.py` | 逐张 `docs +media-upload` 到目标画板，落 `token_map.json`，可断点续传 | images-dir, board-token |
 | `build_dsl.py` | 产 `diagram.json`：根节点居中+品类分列+曲线连线+产品卡片 | rows.json, token_map.json, groups, root_label |
 
 详细字段映射、分组配色、踩坑清单见 `references/`。
@@ -65,4 +69,11 @@ description: >
 - [ ] Excel 行数 = 在售条数；缺失销量/容量留空而非 0；口径说明列出被剔除的状态。
 - [ ] 画板导出预览：根节点居中、6 列（或自定义列）对齐、曲线不穿卡片、每张产品图都真图。
 - [ ] 文档 URL 可访问，board_token 写入成功（`+update` 返回 ok）。
-- [ ] 本地 xlsx 通过 `excel_formula_verify.py`（无公式时 exit 4 是正常终态）。
+- [ ] 若环境提供 `excel_formula_verify.py` 则运行；本仓库未内置该脚本。否则用 `python -c` 之外的独立检查确认文件可被 openpyxl 打开、主表行数与 rows.json 一致。
+
+## 高风险动作与反例黑名单
+
+- 未经明确授权，不得用 `--overwrite` 覆写已有画板，不得删除/移动已有文档，不得批量发送或分享链接。
+- 不得把 Amazon URL、Base 附件 token 或其他域 token 写入 `image.src`；必须先上传到 whiteboard media domain 并核验。
+- 不得把分页失败、空响应、缺失字段当作零值或成功；不得凭品牌名猜测 Base 字段、产品列表或历史销量。
+- 遇到登录/CAPTCHA/限流时 STOP，不得重试放大请求；修复后从 checkpoint 恢复。

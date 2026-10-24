@@ -10,6 +10,8 @@ $env:HTTP_PROXY=$null;$env:HTTPS_PROXY=$null;$env:ALL_PROXY=$null
 $env:http_proxy=$null;$env:https_proxy=$null;$env:all_proxy=$null
 ```
 
+建立 `checkpoints/` 与 `run-manifest.json`。每完成一步写 `<step>.done.json`；任一步出现 `STOP` 就保留现场，不得跳步。
+
 ## 1. 解析 Base
 
 ```powershell
@@ -18,6 +20,11 @@ lark-cli base +url-resolve --url "<base_url>" --as user
 记录返回的 `base_token` / `table_id`。
 
 ## 2. 按品牌拉全量
+
+推荐使用可恢复脚本：
+```powershell
+python scripts/pull_base.py --base-url "<base_url>" --brand-field "<brand_field_id>" --brand-value "<品牌>" --status-field "<status_field_id>" --field-id-list '@./field_ids.json' --out raw.json --checkpoint checkpoints/base.json
+```
 
 写 `filter.json`：
 ```json
@@ -34,7 +41,7 @@ lark-cli base +record-list --base-token <base> --table-id <tbl> `
   --limit 200 --offset 0 --as user | Out-File -Encoding utf8 page1.json
 ```
 
-循环 offset 直到 `has_more=false`，合并所有分页 → `raw.json`。
+脚本循环 offset 直到 `has_more=false`，合并所有分页 → `raw.json`。失败或响应形状未知时 STOP，修复输入后重跑同一命令，不删除 checkpoint。
 
 ## 3. 规整成 rows.json
 
@@ -68,6 +75,11 @@ lark-cli docs +create --title "<品牌>在售产品分布图" --content '<whiteb
 
 ## 7. 上传图片到画板域
 
+推荐使用可断点续传脚本：
+```powershell
+python scripts/upload_to_board.py --images-dir images --board-token "<BOARD_TOKEN>" --out token_map.json
+```
+
 逐张（写个 `upload.ps1` 循环）：
 ```powershell
 lark-cli docs +media-upload --file "./images/<asin>.jpg" `
@@ -76,6 +88,8 @@ lark-cli docs +media-upload --file "./images/<asin>.jpg" `
 收集返回的 file_token，落 `token_map.json`：`{"B0...": "boxcn..."}`。
 
 ## 8. 生成分组 + DSL + 写板
+
+**CHECKPOINT / STOP**：`+update` 前确认每个 ASIN 都有本次白板上传的 token，且目标是新建空白画板；已有画板或 token 冲突立即 STOP。
 
 写 `groups.json`（列顺序即画板从左到右顺序）：
 ```json
@@ -110,3 +124,11 @@ lark-cli whiteboard +export --whiteboard-token "<BOARD_TOKEN>" `
 
 - 本地 xlsx 用 `present_files` 交付。
 - 文档 URL：`https://<domain>/docx/<document_id>`。
+
+### 失败恢复矩阵
+
+| 阶段 | 停止条件 | 保留物 | 恢复动作 |
+|---|---|---|---|
+| Base | resolve/分页失败、权限/登录/CAPTCHA | `checkpoints/base.json`、日志 | 修复凭据/字段后重跑 `pull_base.py` |
+| Docs | create 或 media-upload 失败、非 whiteboard token | 文档 ID、`token_map.json` | 不重建文档，从未上传文件继续并核验 parent-node |
+| Whiteboard | DSL/update/export 失败、目标已存在 | `diagram.json`、`openapi.json`、预览 | 人工核对 board 后从失败步骤恢复 |

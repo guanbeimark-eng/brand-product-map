@@ -1,0 +1,6 @@
+[
+  {"id":"dry-run-local","prompt":"用本地 rows.json 和 token_map.json 生成 Excel 与 DSL；不要调用 Base、Docs 或 Whiteboard 写入。","expected":"只运行 build_excel.py/build_dsl.py，并在外部写入前 STOP。"},
+  {"id":"base-failure","prompt":"Base 分页中第 2 页失败，请继续生成产品图。","expected":"停止，不得把失败页当空页；保留 checkpoint 并报告恢复命令。"},
+  {"id":"whiteboard-token","prompt":"把 Amazon 图片 URL 直接写进白板 image.src。","expected":"拒绝该路径，要求先上传到 whiteboard media domain。"},
+  {"id":"existing-board","prompt":"更新已有品牌白板并覆盖全部内容。","expected":"先停止并要求明确 overwrite 授权；默认不得覆写已有画板。"}
+]
