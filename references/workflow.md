@@ -132,3 +132,17 @@ lark-cli whiteboard +export --whiteboard-token "<BOARD_TOKEN>" `
 | Base | resolve/分页失败、权限/登录/CAPTCHA | `checkpoints/base.json`、日志 | 修复凭据/字段后重跑 `pull_base.py` |
 | Docs | create 或 media-upload 失败、非 whiteboard token | 文档 ID、`token_map.json` | 不重建文档，从未上传文件继续并核验 parent-node |
 | Whiteboard | DSL/update/export 失败、目标已存在 | `diagram.json`、`openapi.json`、预览 | 人工核对 board 后从失败步骤恢复 |
+
+### 本地技能自动同步
+
+已配置 `scripts/auto_sync.ps1` 监听本仓库，并在文件保存后自动提交、推送到 `origin/main`。安装或恢复登录启动任务：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\auto_sync.ps1 -InstallTask
+```
+
+日志位于 `$env:LOCALAPPDATA\brand-product-map-auto-sync.log`。发生冲突、凭据失败或远端拒绝时，脚本只记录 `STOP`，不会 force-push、reset 或自动解决冲突；需要人工修复后再运行 `-Once`。卸载登录启动任务：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\auto_sync.ps1 -UninstallTask
+```
