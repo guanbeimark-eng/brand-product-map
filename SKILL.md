@@ -16,7 +16,7 @@ description: >
 - **输出**：
   1. 本地 `.xlsx`：主表（序号/产品名/容量规格/包装/价格/SS月销量/SS月销售额/评分/评论数/品类/ASIN/链接）+ 口径说明 sheet；
   2. 一篇新建的独立飞书文档，内嵌一块画板：品牌根节点居中置顶 → 曲线连到各品类列 → 每款产品一张带图卡片。
-- **不做**：不覆写已有画板；不替用户判断"哪些产品该上画板"（默认全部在售，数量极多时先问）；不做竞品/外部爬取。
+- **不做**：**每个品牌必须新建独立飞书文档 + 独立画板，绝不复用/覆写任何已有 board_token（包括同 Base 的其他品牌画板）**；不替用户判断"哪些产品该上画板"（默认全部在售，数量极多时先问）；不做竞品/外部爬取。
 
 ## 总流程（8 步，带 checkpoint）
 
@@ -29,7 +29,7 @@ description: >
 3. **清洗规整**：状态只收"在售"；"在售(待抽查)/待核实/缺货/已下架"在口径说明里列出但不入主表；同产品不同容量/包装**逐行分开**；容量/包装缺失留空不臆造。
 4. **生成 Excel**：用 `scripts/build_excel.py`（openpyxl），列结构固定，附口径说明 sheet。
 5. **下载高清产品图**：用 `scripts/download_images.py`，Amazon `_AC_US200_` 替换为 `_AC_SL1200_` 拉高清，失败回退原 URL；每条 >3KB 才算成功。
-6. **新建文档+空白画板**：`docs +create --title "<品牌>在售产品分布图" --content '<whiteboard type="blank"></whiteboard>'`，从 `new_blocks[0].block_token` 取 `board_token`。
+6. **新建独立文档+空白画板（强制）**：**必须** `docs +create --title "<品牌>在售产品分布图" --content '<whiteboard type="blank"></whiteboard>'` 新建一篇全新文档；从 `new_blocks[0].block_token` 取 `board_token`。**禁止复用任何已有 board_token、禁止往旧画板 +update --overwrite**——不同品牌/不同次任务的画板必须物理隔离，否则会互相覆盖。
 7. **图片上传到画板域**：`docs +media-upload --file ./xxx.jpg --parent-type whiteboard --parent-node <board_token> --as user` 逐张上传，收集 `file_token` 映射。**非 whiteboard 域 token 会 500 (2891001)**。
 8. **生成 DSL → 写板 → 核对**：用 `scripts/build_dsl.py` 产 `diagram.json`；`npx @larksuite/whiteboard-cli --to openapi` 转格式；`whiteboard +update --input_format raw --overwrite` 写入；`+export --output-type preview` 导出 PNG 核对。
 
@@ -67,6 +67,7 @@ description: >
 
 ## 交付前自检
 
+- [ ] **board_token 是本次 docs +create 新建出来的，不是从历史对话/旧文档里捞的**——写入前回查 `new_blocks`，确认 block_type=whiteboard 且属于刚 create 的文档。
 - [ ] Excel 行数 = 在售条数；缺失销量/容量留空而非 0；口径说明列出被剔除的状态。
 - [ ] 画板导出预览：根节点居中、6 列（或自定义列）对齐、曲线不穿卡片、每张产品图都真图。
 - [ ] 文档 URL 可访问，board_token 写入成功（`+update` 返回 ok）。
