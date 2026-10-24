@@ -1,163 +1,127 @@
-# Workflow（完整命令手册）
+# Workflow（插件内完整命令手册）
 
-> 本文是 SKILL.md 8 步流程的可复制命令模板。所有命令在 Windows PowerShell 下执行；脚本路径相对插件内的 `skills/brand-product-map` 目录。
+> 本文命令相对插件根目录执行。插件根目录包含 `plugin.json` 和 `skills/brand-product-map`；业务脚本位于 `skills/brand-product-map/scripts`。
 
-## 0. 每次开始前：清代理 + 切目录
+## 0. 初始化目录、代理和 checkpoint
 
 ```powershell
-$skillDir = "<插件目录>\skills\brand-product-map"
-$pluginDir = Split-Path $skillDir -Parent
-Set-Location $skillDir
+$pluginDir = "<插件目录>"
+$skillDir = Join-Path $pluginDir "skills\brand-product-map"
 $projectDir = "<项目数据目录>"
-$checkpointDir = Join-Path $projectDir "checkpoints"
-New-Item -ItemType Directory -Force $checkpointDir | Out-Null
+Set-Location $projectDir
+New-Item -ItemType Directory -Force "$projectDir\checkpoints" | Out-Null
 $env:HTTP_PROXY=$null;$env:HTTPS_PROXY=$null;$env:ALL_PROXY=$null
 $env:http_proxy=$null;$env:https_proxy=$null;$env:all_proxy=$null
 ```
 
-输入和输出文件放在 `$projectDir`；运行脚本时使用 `$skillDir\scripts\...`，每完成一步在 `$checkpointDir` 写 `<step>.done.json`；任一步出现 `STOP` 就保留现场，不得跳步。
+每完成一步写入 `$projectDir\checkpoints\<step>.done.json`，记录输入、输出、时间和远程资源 ID。任一步出现 `STOP` 就保留现场，不得跳步。
 
-## 1. 解析 Base
+## 1. SellerSprite 拉取产品
 
-```powershell
-lark-cli base +url-resolve --url "<base_url>" --as user
-```
-记录返回的 `base_token` / `table_id`。
-
-## 2. 按品牌拉全量
-
-推荐使用可恢复脚本：
-```powershell
-python "$skillDir\scripts\pull_base.py" --base-url "<base_url>" --brand-field "<brand_field_id>" --brand-value "<品牌>" --status-field "<status_field_id>" --field-id-list "@$projectDir\field_ids.json" --out "$projectDir\raw.json" --checkpoint "$checkpointDir\base.json"
-```
-
-写 `filter.json`：
-```json
-{"conjunction":"and","conditions":[
-  {"field_id":"fldGObUWsi","operator":"is","value":["<品牌名>"]},
-  {"field_id":"fldQzLFz0c","operator":"is","value":["在售"]}
-]}
-```
+凭据只从安全运行时读取，禁止写入文件或日志：
 
 ```powershell
-lark-cli base +record-list --base-token <base> --table-id <tbl> `
-  --filter-json "@./filter.json" `
-  --field-id-list '["fldsnNS9at","fldvETDAgA","fldIa8Dtdx","fldRwM5ZGD","fldFsiGoBQ","fldylziDCI","fldLjDKsoF","fldIRWAoxv","fldRlp37YQ","fldry4smi1","fldQvmaeB8","fldy6K0WAo"]' `
-  --limit 200 --offset 0 --as user | Out-File -Encoding utf8 page1.json
+if (-not $env:SELLERSPRITE_KEY) { throw "STOP: SELLERSPRITE_KEY is missing" }
+python "$skillDir\scripts\sp_fetch.py" --brand "<Brand>" --out "$projectDir\brand_products.json"
 ```
 
-脚本循环 offset 直到 `has_more=false`，合并所有分页 → `raw.json`。失败或响应形状未知时 STOP，修复输入后重跑同一命令，不删除 checkpoint。
+脚本通过 Streamable HTTP 的 `competitor_lookup` 分页拉全量。认证失败、响应非预期、空页或限流时停止并保留日志。
 
-## 3. 规整成 rows.json
-
-按 base-fields.md 规则拆容量/包装，正则抓 `Pack of N` / `N Pack` / `+`。输出：
-```json
-[{"asin":"B0...","name":"...","capacity":"100 mL","pack":1,
-  "price":19.99,"monthly_sales":600,"monthly_revenue":11994,
-  "rating":4.3,"reviews":123,"category":"纤体塑形霜",
-  "url":"https://...","image_url":"https://m.media-amazon.com/..."}]
-```
-
-## 4. 生成 Excel
+## 2. 清洗和拆分品牌
 
 ```powershell
-python "$skillDir\scripts\build_excel.py" --rows "$projectDir\rows.json" --out "$projectDir\<品牌>在售产品整理.xlsx" --brand "<品牌>" --excluded "<json>"
+python "$skillDir\scripts\clean_mcp.py" --raw "$projectDir\brand_products.json" --out "$projectDir\rows_by_brand.json"
 ```
 
-## 5. 下载产品图
+从 `rows_by_brand.json` 中取目标品牌数组，写成 `$projectDir\rows_<brand>.json`。核对清洗前后行数和被剔除品类。
+
+## 3. 生成 Excel
 
 ```powershell
-python "$skillDir\scripts\download_images.py" --rows "$projectDir\rows.json" --out-dir "$projectDir\images"
+python "$skillDir\scripts\build_excel.py" --rows "$projectDir\rows_<brand>.json" --out "$projectDir\<Brand>在售产品整理.xlsx" --brand "<Brand>"
+python "$skillDir\scripts\excel_formula_verify.py" --xlsx "$projectDir\<Brand>在售产品整理.xlsx" --rows "$projectDir\rows_<brand>.json"
 ```
 
-## 6. 新建飞书文档 + 空白画板
+exit code 4 表示工作簿有效但没有公式；exit code 2 表示文件、行数或明显公式错误。
+
+## 4. 下载产品图
+
+```powershell
+python "$skillDir\scripts\download_images.py" --rows "$projectDir\rows_<brand>.json" --out-dir "$projectDir\images_<brand>"
+```
+
+检查 `_failed.txt`；失败图片不能静默当作成功。
+
+## 5. 新建独立文档和白板
+
+先准备只包含 `<whiteboard type="blank"></whiteboard>` 的内容文件：
 
 ```powershell
 Set-Location $projectDir
+Set-Content -LiteralPath .\wb_content.xml -Value '<whiteboard type="blank"></whiteboard>' -Encoding utf8
+lark-cli docs +create --title "<Brand>在售产品分布图" --content "@.\wb_content.xml" --as user
 ```
+
+从 `data.new_blocks` 中找到 `block_type=="whiteboard"` 的 `block_token`，记为本次运行的 `BOARD_TOKEN`。已有文档或旧白板 token 立即 `STOP`。
+
+## 6. 上传图片到白板域
 
 ```powershell
-lark-cli docs +create --title "<品牌>在售产品分布图" --content '<whiteboard type="blank"></whiteboard>' --as user
-```
-从返回 `data.new_blocks` 里找 `block_type=="whiteboard"` 的 `block_token`，记为 `BOARD_TOKEN`。
-文档 ID 在 `data.document_id`。
-
-## 7. 上传图片到画板域
-
-推荐使用可断点续传脚本：
-```powershell
-python "$skillDir\scripts\upload_to_board.py" --images-dir "$projectDir\images" --board-token "<BOARD_TOKEN>" --out "$projectDir\token_map.json"
+python "$skillDir\scripts\upload_to_board.py" --images-dir ".\images_<brand>" --board-token "<BOARD_TOKEN>" --out ".\token_map_<brand>.json"
 ```
 
-逐张（写个 `upload.ps1` 循环）：
-```powershell
-lark-cli docs +media-upload --file "./images/<asin>.jpg" `
-  --parent-type whiteboard --parent-node "<BOARD_TOKEN>" --as user
-```
-收集返回的 file_token，落 `token_map.json`：`{"B0...": "boxcn..."}`。
+每个 token 必须来自本次 `docs +media-upload --parent-type whiteboard --parent-node <BOARD_TOKEN>`。不得把 Amazon URL、Base 附件 token 或其他域 token 写入 `image.src`。
 
-## 8. 生成分组 + DSL + 写板
-
-**CHECKPOINT / STOP**：`+update` 前确认每个 ASIN 都有本次白板上传的 token，且目标是新建空白画板；已有画板或 token 冲突立即 STOP。
-
-写 `groups.json`（列顺序即画板从左到右顺序）：
-```json
-[
-  {"title":"眼膜·绿茶/蓝","color_main":"#5178C6","color_bg":"#F0F4FC","asins":["B0...","B0..."]},
-  {"title":"纤体塑形霜","color_main":"#509863","color_bg":"#DFF5E5","asins":["B0..."]}
-]
-```
+## 7. 生成分组和 DSL
 
 ```powershell
-python "$skillDir\scripts\build_dsl.py" --rows .\rows.json --token-map .\token_map.json `
-  --root-label "<BRAND>" --root-sub "在售产品分布 · N款" `
-  --groups .\groups.json --out .\diagrams\diagram.json
-
-npx -y "@larksuite/whiteboard-cli@^0.2.13" -i .\diagrams\diagram.json --to openapi --format json -o .\diagrams\openapi.json
-
-lark-cli whiteboard +update --whiteboard-token "<BOARD_TOKEN>" `
-  --source "@.\diagrams\openapi.json" --input_format raw --overwrite `
-  --idempotent-token "<unique>=10chars" --as user
+python "$skillDir\scripts\make_groups.py" --rows ".\rows_<brand>.json" --out ".\groups_<brand>.json"
+python "$skillDir\scripts\build_dsl.py" --rows ".\rows_<brand>.json" --token-map ".\token_map_<brand>.json" --root-label "<BRAND>" --root-sub "在售产品分布 · N款" --groups ".\groups_<brand>.json" --out ".\diagram_<brand>.json"
+npx -y "@larksuite/whiteboard-cli@^0.2.13" -i ".\diagram_<brand>.json" --check
+npx -y "@larksuite/whiteboard-cli@^0.2.13" -i ".\diagram_<brand>.json" -t openapi -F json -o ".\openapi_<brand>.json"
 ```
 
-## 9. 导出核对
+`--check` 非零或有 errors 时 `STOP`。
+
+## 8. 写板和预览
 
 ```powershell
+lark-cli whiteboard +update --whiteboard-token "<BOARD_TOKEN>" --source "@.\openapi_<brand>.json" --input_format raw --overwrite --idempotent-token "<brand>-v1" --as user
 Start-Sleep -Seconds 25
-lark-cli whiteboard +export --whiteboard-token "<BOARD_TOKEN>" `
-  --output-type preview --output ".\diagrams\live" --overwrite
+lark-cli whiteboard +export --whiteboard-token "<BOARD_TOKEN>" --output-type preview --output ".\preview_<brand>" --as user
 ```
-打开 `live.jpg` 检查。
 
-## 10. 交付
+`+update` 前再次核对目标是本次新建白板；写入或导出失败保留 `diagram_<brand>.json`、`openapi_<brand>.json` 和 checkpoint。
 
-- 本地 xlsx 用 `present_files` 交付。
-- 文档 URL：`https://<domain>/docx/<document_id>`。
+## 9. Base 备用流程
 
-交付前运行工作簿校验：
+仅当用户提供真实 Base URL、table ID 和字段 ID 时使用：
+
 ```powershell
-python "$skillDir\scripts\excel_formula_verify.py" --xlsx "$projectDir\<品牌>在售产品整理.xlsx" --rows "$projectDir\rows.json"
+python "$skillDir\scripts\pull_base.py" --base-url "<base_url>" --brand-field "<brand_field_id>" --brand-value "<品牌>" --status-field "<status_field_id>" --field-id-list "@.\field_ids.json" --out ".\raw.json" --checkpoint ".\checkpoints\base.json"
 ```
-无公式时退出码 4 是正常终态；退出码 2 表示工作簿、行数或明显公式错误，需要 STOP。
 
-### 失败恢复矩阵
+不得凭品牌名猜 Base 或字段；分页失败、响应形状未知或记录数突变时 `STOP`。
+
+## 10. 失败恢复矩阵
 
 | 阶段 | 停止条件 | 保留物 | 恢复动作 |
 |---|---|---|---|
-| Base | resolve/分页失败、权限/登录/CAPTCHA | `checkpoints/base.json`、日志 | 修复凭据/字段后重跑 `pull_base.py` |
-| Docs | create 或 media-upload 失败、非 whiteboard token | 文档 ID、`token_map.json` | 不重建文档，从未上传文件继续并核验 parent-node |
-| Whiteboard | DSL/update/export 失败、目标已存在 | `diagram.json`、`openapi.json`、预览 | 人工核对 board 后从失败步骤恢复 |
+| SellerSprite/Base | 凭据、权限、分页或响应错误 | 原始 JSON、日志、checkpoint | 修复输入/凭据后从最近步骤恢复 |
+| Docs | create 失败、文档已存在、block 缺失 | 文档 ID、checkpoint | 不重建已有文档，核对输入后重试 |
+| Whiteboard | token 域错误、check/update/export 失败 | DSL、OpenAPI、预览 | 核对本次 BOARD_TOKEN 后从失败步骤恢复 |
 
-### 本地技能自动同步
+## 11. 本地自动同步
 
-已配置 `$pluginDir\scripts\auto_sync.ps1` 监听本仓库，并在文件保存后自动提交、推送到 `origin/main`。安装或恢复登录启动任务（从插件根目录执行）：
+自动同步脚本位于插件根目录的 `scripts\auto_sync.ps1`。它监听整个 Git 工作区，去抖后提交并推送到 `origin/main`：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File "$pluginDir\scripts\auto_sync.ps1" -InstallTask
 ```
 
-日志位于 `$env:LOCALAPPDATA\brand-product-map-auto-sync.log`。发生冲突、凭据失败或远端拒绝时，脚本只记录 `STOP`，不会 force-push、reset 或自动解决冲突；需要人工修复后再运行 `-Once`。卸载登录启动任务：
+冲突、凭据失败或远端拒绝时只记录 `STOP`，不会 force-push、reset 或自动解决冲突。日志位于 `$env:LOCALAPPDATA\brand-product-map-auto-sync.log`。卸载登录启动任务：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File "$pluginDir\scripts\auto_sync.ps1" -UninstallTask
 ```
+
