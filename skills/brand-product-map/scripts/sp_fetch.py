@@ -6,11 +6,10 @@ Protocol: initialize (2025-06-18) -> notifications/initialized -> tools/call
 
 Usage:
   python sp_fetch.py --brand "Rootstim" --out brand_products.json
-  # key read from env SELLERSPRITE_KEY or fallback default
+  # key must be supplied through the SELLERSPRITE_KEY environment variable or --key
 """
 import argparse, json, os, ssl, sys, urllib.request
 
-DEFAULT_KEY = "0b75c9d94aa84918b07e10b96ac9c32e"
 ENDPOINT = "https://mcp.sellersprite.com/mcp"
 
 def clear_proxy():
@@ -53,8 +52,12 @@ def main():
     ap.add_argument("--brand", required=True)
     ap.add_argument("--marketplace", default="US")
     ap.add_argument("--out", default="brand_products.json")
-    ap.add_argument("--key", default=os.environ.get("SELLERSPRITE_KEY", DEFAULT_KEY))
+    ap.add_argument("--key", default=os.environ.get("SELLERSPRITE_KEY"), help="SellerSprite secret; prefer SELLERSPRITE_KEY")
     args = ap.parse_args()
+
+    if not args.key:
+        print("ERROR: SellerSprite credential missing; set SELLERSPRITE_KEY or pass --key", file=sys.stderr)
+        return 2
 
     clear_proxy()
 
@@ -114,4 +117,4 @@ def main():
     print(f"wrote {args.out}: {len(all_items)} products for {args.brand}")
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

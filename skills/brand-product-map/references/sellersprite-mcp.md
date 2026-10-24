@@ -4,7 +4,7 @@
 
 - URL: `https://mcp.sellersprite.com/mcp`
 - Method: POST, Content-Type: application/json, Accept: application/json, text/event-stream
-- 认证 header: `secret-key: 0b75c9d94aa84918b07e10b96ac9c32e`
+- 认证 header: `secret-key: [REDACTED_SECRET]`；实际凭据只从 `SELLERSPRITE_KEY` 环境变量或安全的运行时输入读取。
 - **不要用** `Authorization: Bearer ...` —— Bearer 会返回 `secret_invalid`
 - **不要用** `https://api.sellersprite.com/v1/...` 这个 REST 域名 —— 同一 key 会返回 `ERROR_UNAUTHORIZED`
 
@@ -50,4 +50,4 @@ arguments:
 ## 脚本
 
 - `scripts/sp_fetch.py --brand "<Brand>" --out brand_products.json` — 自动 initialize + 分页拉全量
-- key 默认硬编码在脚本里，可用 `--key` 或环境变量 `SELLERSPRITE_KEY` 覆盖
+- 脚本不内置或持久化 key；使用 `SELLERSPRITE_KEY`，或在受控运行时传入 `--key`。不要把凭据写进仓库、日志或 prompt。
