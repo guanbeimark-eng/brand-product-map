@@ -1,82 +1,79 @@
 ---
 name: brand-product-map
 description: >
-  从一个品牌名出发，自动通过卖家精灵 MCP 拉取 Amazon 在售产品（含销量/销售额/评分/主图），
-  整理成标准化 Excel，并新建一篇独立飞书文档 + 内嵌一张自上而下曲线连线的产品分布画板
-  （根节点=品牌名居中置顶，按品类分列，每款产品卡片带高清主图+规格+价格+月销+评分）。
-  适用于"整理某品牌在售产品""做个产品分布图/产品墙/产品架构图""按品牌出 Excel 并配套在线画板"
-  "把 Amazon 品牌可视化"等任务。每个品牌必须新建独立文档+画板，禁止覆写旧画板。
+  按品牌从 SellerSprite MCP 或用户提供的飞书 Base 拉取 Amazon 在售产品，整理标准化 Excel，
+  并新建独立飞书文档与产品分布画板。适用于品牌产品清单、Base 在售产品、产品墙、产品架构图、
+  产品分布图、品牌 Excel、Amazon 品牌可视化和在线画板；不适用于竞品调研、外部爬虫、单纯
+  Excel 格式编辑、无来源的臆测清单或无关的已有画板设计修改。
 ---
 
 # Brand Product Map（品牌产品调研 + 在线分布图）
 
-## 输入与输出
+## 适用范围与边界
 
-- **输入**：一个 Amazon 品牌名（如 `Rootstim`、`Maravello`、`EnaSkin`）。
-- **输出**：
-  1. 本地 `.xlsx`：主表（序号/产品名/容量规格/包装/价格/月销量/月销售额/评分/评论数/品类/ASIN/链接）+ 口径说明 sheet；
-  2. 一篇新建的独立飞书文档，内嵌一块画板：品牌根节点居中置顶 → 曲线连到各品类列 → 每款产品一张带图卡片。
-- **边界**：每个品牌必须 `docs +create` 新建独立文档+画板，绝不复用/覆写任何已有 board_token；非护发品类（如串品牌的家居清洁品）自动剔除并在口径说明里列出。
+- **输入**：Amazon 品牌名（SellerSprite 主流程），或包含字段 ID 的飞书 Base URL（Base 备用流程）。
+- **输出**：标准化 `.xlsx`、口径说明，以及一篇新建的独立飞书文档和白板产品分布图。
+- 每个品牌必须新建独立文档与白板；不得复用、删除或默认覆写已有 `board_token`。
+- 缺失销量、容量、评分或图片时保留空值并记录口径，不臆造或填零。
 
-## 总流程（9 步）
+## Checkpoint 与 STOP 规则
 
-工作目录建议新建 `brand_work/`，所有中间产物落这里。
+在项目数据目录建立 `checkpoints/`；每步完成后写入 `<step>.done.json`，记录输入、输出、时间和远程资源 ID。外部写入前必须存在可核对的本地产物。
 
-1. **拉产品**：`python scripts/sp_fetch.py --brand "<Brand>" --out brand_products.json`
-   - 自动走卖家精灵 MCP Streamable HTTP 握手，按 `competitor_lookup` 分页拉全量，按月销降序。
-   - 认证、endpoint、字段说明见 `references/sellersprite-mcp.md`。
-2. **清洗规整**：`python scripts/clean_mcp.py --raw brand_products.json --out rows.json`
-   - 自动提取容量（Fl Oz / mL / Pairs）、包装数（Pack of N）、品类（米诺地尔溶液/喷雾/泡沫、洗发水、护发素、洗护套装、护发精华/油、其他）。
-   - 串品牌的非目标品类（如 garbage disposal cleaner）自动剔除。
-   - `rows.json` 里每个 key 是品牌名，value 是标准化行数组。拆出单品牌：`json.dump(rows["<Brand>"], open("rows_<brand>.json","w",encoding="utf-8"), ensure_ascii=False)`。
-3. **生成 Excel**：`python scripts/build_excel.py --rows rows_<brand>.json --out "<Brand>在售产品整理.xlsx" --brand "<Brand>"`
-4. **下载高清产品图**：`python scripts/download_images.py --rows rows_<brand>.json --out-dir images_<brand>`
-   - Amazon `_AC_US200_/_SS200_/_SY200_` 自动替换成 `_AC_SL1200_` 拉高清。
-5. **新建独立文档+空白画板（强制）**：
-   - 先写 `wb_content.xml` 内容为 `<whiteboard type="blank"></whiteboard>`；
-   - `lark-cli docs +create --title "<Brand>在售产品分布图" --content "@./wb_content.xml" --as user`；
-   - 从 `data.new_blocks[0].block_token` 取 `board_token`（block_type=whiteboard）。
-   - **禁止复用任何已有 board_token、禁止往旧画板 +update --overwrite**。
-6. **图片上传到画板域**：`python scripts/upload_to_board.py --images-dir images_<brand> --board-token <BOARD_TOKEN> --out token_map_<brand>.json`
-   - image.src 必须是 whiteboard 域 file_token；用 Amazon URL 或 Base 附件 token 会 500。
-7. **生成分组 + DSL**：
-   - `python scripts/make_groups.py --rows rows_<brand>.json --out groups_<brand>.json`（按品类自动分列，配色循环）；
-   - `python scripts/build_dsl.py --rows rows_<brand>.json --token-map token_map_<brand>.json --root-label "<BRAND>" --root-sub "在售产品分布 · N款" --groups groups_<brand>.json --out diagram_<brand>.json`。
-8. **校验 → 转 OpenAPI → 写板**：
-   - `npx -y @larksuite/whiteboard-cli@^0.2.13 -i diagram_<brand>.json --check`（必须 0 errors）；
-   - `npx -y @larksuite/whiteboard-cli@^0.2.13 -i diagram_<brand>.json -t openapi -F json -o openapi_<brand>.json`；
-   - `lark-cli whiteboard +update --whiteboard-token <BOARD_TOKEN> --source "@./openapi_<brand>.json" --input_format raw --overwrite --idempotent-token "<brand>-v1" --as user`。
-9. **导出预览核对**：`Start-Sleep 25` 后 `lark-cli whiteboard +export --whiteboard-token <BOARD_TOKEN> --output-type preview --output preview_<brand> --as user`。
+遇到以下任一情况立即输出 **`STOP`**，保留现场并报告最后成功步骤与恢复命令：
 
-## 关键环境硬约束
+- SellerSprite/Base/Docs/Whiteboard 返回错误、认证失败、权限不足、CAPTCHA 或限流；
+- 凭据缺失、分页响应形状未知、空页伴随 `has_more=true`、记录数突变或字段无法映射；
+- 目标文档/白板已存在、token 域不正确，或 `whiteboard-cli --check` 报错；
+- 任一步产物缺失。禁止把失败页、空响应或缺失字段当作成功继续。
 
-- **每次调 lark-cli / npx / sp_fetch 前清空代理**：`$env:HTTP_PROXY=$null;$env:HTTPS_PROXY=$null;$env:ALL_PROXY=$null`，否则 dial 127.0.0.1 拒绝。
-- **Windows 用 `python` 不是 `python3`**；PowerShell 单命令、`@file` 相对路径、中文/JSON 落文件内联会炸。
-- **画板 DSL schema（2025-10 版）**：
-  - rect 用 `fillColor/borderColor/borderWidth/borderRadius`（不是 fill/border/radius）；
-  - text 用 `textColor/textAlign/verticalAlign`（不是 color/align）；
-  - image 是 `{"type":"image","image":{"src":"<file_token>"}}`（不是 src 平级）；
-  - connector 是 `{"type":"connector","connector":{"from":id,"to":id,"fromAnchor":"bottom","toAnchor":"top","lineShape":"curve","lineColor":"#BBBFC4","lineWidth":2,"endArrow":"none"}}`，**必须放顶层 nodes 数组**。
-- **preview 导出 jpg**，`--output` 只给前缀，不要写扩展名；写入后 sleep 20~30s 再导。
-- **mermaid LR/mindmap 在飞书画板会被强制竖向**，别用；直接走 DSL + whiteboard-cli。
-- 本地渲染 PNG 拉不到云端图是正常的，真图只能在飞书线上看。
+修复输入或权限后从最近 checkpoint 恢复；不要删除 checkpoint、扩大重试、force-push 或重置远端。
 
-## 脚本一览（scripts/）
+## 主流程（SellerSprite MCP）
+
+以下脚本路径相对本 skill 目录 `skills/brand-product-map`；详细 PowerShell 模板见 [`references/workflow.md`](references/workflow.md)。
+
+1. **拉取产品**：`python scripts/sp_fetch.py --brand "<Brand>" --out "$projectDir\brand_products.json"`。
+   通过 SellerSprite Streamable HTTP 的 `competitor_lookup` 分页拉全量并按月销排序。凭据只从 `SELLERSPRITE_KEY` 或运行时 `--key` 读取，绝不写入仓库或日志。
+2. **清洗规整**：`python scripts/clean_mcp.py --raw ... --out ...`，提取容量、包装、品类并剔除明显非目标品类；逐品牌拆出 `rows_<brand>.json`。
+3. **生成 Excel**：`python scripts/build_excel.py --rows rows_<brand>.json --out "<Brand>在售产品整理.xlsx" --brand "<Brand>"`。
+4. **下载产品图**：`python scripts/download_images.py --rows rows_<brand>.json --out-dir images_<brand>`；失败写入 `_failed.txt`，不得用空图继续。
+5. **新建独立文档和空白白板**：在获得本次操作授权后执行 `docs +create`，从返回的 whiteboard block 取得本次 `BOARD_TOKEN`。
+6. **上传白板图片**：`python scripts/upload_to_board.py --images-dir images_<brand> --board-token <BOARD_TOKEN> --out token_map_<brand>.json`；`image.src` 只能使用本次 whiteboard media upload 返回的 token。
+7. **生成分组和 DSL**：运行 `scripts/make_groups.py`、`scripts/build_dsl.py`，生成品类列、卡片和曲线连接。
+8. **校验、写板和预览**：先运行 `whiteboard-cli --check`；确认是本次新建白板后再转换 OpenAPI、`+update` 和 `+export`。写入前的核对失败即 STOP。
+9. **交付前校验 Excel**：`python scripts/excel_formula_verify.py --xlsx "<Brand>在售产品整理.xlsx" --rows rows_<brand>.json`；exit 4 表示无公式但工作簿有效，exit 2 表示错误。
+
+## Base 备用流程
+
+当用户提供 Base URL 和真实字段 ID 时，可运行 `scripts/pull_base.py` 分页拉取并逐页 checkpoint，再从第 2 步开始清洗。不得凭品牌名猜 Base、表或字段；没有字段映射就 STOP。Base 详细命令见 [`references/workflow.md`](references/workflow.md) 和 [`references/base-fields.md`](references/base-fields.md)。
+
+## 脚本一览
 
 | 脚本 | 作用 |
 |---|---|
-| `sp_fetch.py` | 卖家精灵 MCP 按品牌分页拉全量产品 → `brand_products.json` |
-| `clean_mcp.py` | 清洗 MCP 数据 → `rows.json`（含 capacity/pack/category 提取） |
-| `make_groups.py` | 按品类自动生成分组配色 `groups.json` |
-| `build_excel.py` | 产 `.xlsx`（主表+口径说明） |
-| `download_images.py` | Amazon 主图高清化批量下载 |
-| `upload_to_board.py` | 逐张 `docs +media-upload` 到目标画板，落 token_map.json |
-| `build_dsl.py` | 产 `diagram.json`：根节点居中+品类分列+曲线连线+产品卡片（新 schema） |
+| `sp_fetch.py` | SellerSprite MCP 按品牌分页拉取产品 |
+| `clean_mcp.py` | 清洗 MCP 响应并提取容量、包装、品类 |
+| `make_groups.py` | 按品类生成分组和配色 |
+| `pull_base.py` | Base URL 解析、品牌分页拉取和 checkpoint |
+| `build_excel.py` | 生成主表和口径说明 sheet |
+| `download_images.py` | 批量下载高清产品图 |
+| `upload_to_board.py` | 上传到 whiteboard media domain 并保存 token 映射 |
+| `build_dsl.py` | 生成产品分布图 DSL |
+| `excel_formula_verify.py` | 打开工作簿、核对行数并检查明显公式错误 |
+
+## 高风险动作和反例黑名单
+
+- 未经明确授权，不得创建文档、上传文件、写入/覆写白板、删除资源或分享链接。
+- 不得把 Amazon URL、Base 附件 token 或其他域 token 写入 `image.src`。
+- 不得把 SellerSprite secret、访问 token 或任何凭据硬编码、写入日志、提交 Git 或输出给用户。
+- 不得把失败分页、空响应、缺失字段、未知状态或非目标品类当成有效产品。
+- 不得从历史文档或搜索结果复用旧 `board_token`；每个品牌必须核对本次新建资源。
 
 ## 交付前自检
 
-- [ ] board_token 是本次 `docs +create` 新建出来的，不是从历史对话捞的。
-- [ ] Excel 行数 = 清洗后在售条数；口径说明列出被剔除的非目标品类。
-- [ ] `whiteboard-cli --check` 报 0 errors / 0 warnings。
-- [ ] `whiteboard +update` 返回 ok，created_node_ids 数量与 DSL nodes 数一致。
-- [ ] 文档 URL 可访问，预览导出 jpg 正常。
+- [ ] checkpoint 与原始数据、清洗后行数、Excel 行数一致。
+- [ ] `excel_formula_verify.py` 通过；exit 4 仅表示没有公式。
+- [ ] `whiteboard-cli --check` 为 0 errors；预览根节点、品类列、曲线和卡片布局正确。
+- [ ] 文档 URL、白板 token 和所有图片 token 均来自本次运行并可追溯。
+
