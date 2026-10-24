@@ -125,6 +125,12 @@ lark-cli whiteboard +export --whiteboard-token "<BOARD_TOKEN>" `
 - 本地 xlsx 用 `present_files` 交付。
 - 文档 URL：`https://<domain>/docx/<document_id>`。
 
+交付前运行工作簿校验：
+```powershell
+python scripts/excel_formula_verify.py --xlsx "<品牌>在售产品整理.xlsx" --rows rows.json
+```
+无公式时退出码 4 是正常终态；退出码 2 表示工作簿、行数或明显公式错误，需要 STOP。
+
 ### 失败恢复矩阵
 
 | 阶段 | 停止条件 | 保留物 | 恢复动作 |
