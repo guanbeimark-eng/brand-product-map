@@ -1,0 +1,15 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "brand-product-map",
+  "version": "0.2.0",
+  "description": "Build a brand product inventory workbook and a Lark whiteboard product distribution map from a Lark Base.",
+  "repository": "https://github.com/guanbeimark-eng/brand-product-map",
+  "keywords": [
+    "lark",
+    "feishu",
+    "base",
+    "product-research",
+    "whiteboard",
+    "excel"
+  ]
+}

@@ -1,16 +1,21 @@
 # Workflow（完整命令手册）
 
-> 本文是 SKILL.md 8 步流程的可复制命令模板。所有命令在 Windows PowerShell 下执行，工作目录切到项目目录后运行。
+> 本文是 SKILL.md 8 步流程的可复制命令模板。所有命令在 Windows PowerShell 下执行；脚本路径相对插件内的 `skills/brand-product-map` 目录。
 
 ## 0. 每次开始前：清代理 + 切目录
 
 ```powershell
-Set-Location "<项目目录>"
+$skillDir = "<插件目录>\skills\brand-product-map"
+$pluginDir = Split-Path $skillDir -Parent
+Set-Location $skillDir
+$projectDir = "<项目数据目录>"
+$checkpointDir = Join-Path $projectDir "checkpoints"
+New-Item -ItemType Directory -Force $checkpointDir | Out-Null
 $env:HTTP_PROXY=$null;$env:HTTPS_PROXY=$null;$env:ALL_PROXY=$null
 $env:http_proxy=$null;$env:https_proxy=$null;$env:all_proxy=$null
 ```
 
-建立 `checkpoints/` 与 `run-manifest.json`。每完成一步写 `<step>.done.json`；任一步出现 `STOP` 就保留现场，不得跳步。
+输入和输出文件放在 `$projectDir`；运行脚本时使用 `$skillDir\scripts\...`，每完成一步在 `$checkpointDir` 写 `<step>.done.json`；任一步出现 `STOP` 就保留现场，不得跳步。
 
 ## 1. 解析 Base
 
@@ -23,7 +28,7 @@ lark-cli base +url-resolve --url "<base_url>" --as user
 
 推荐使用可恢复脚本：
 ```powershell
-python scripts/pull_base.py --base-url "<base_url>" --brand-field "<brand_field_id>" --brand-value "<品牌>" --status-field "<status_field_id>" --field-id-list '@./field_ids.json' --out raw.json --checkpoint checkpoints/base.json
+python "$skillDir\scripts\pull_base.py" --base-url "<base_url>" --brand-field "<brand_field_id>" --brand-value "<品牌>" --status-field "<status_field_id>" --field-id-list "@$projectDir\field_ids.json" --out "$projectDir\raw.json" --checkpoint "$checkpointDir\base.json"
 ```
 
 写 `filter.json`：
@@ -56,16 +61,20 @@ lark-cli base +record-list --base-token <base> --table-id <tbl> `
 ## 4. 生成 Excel
 
 ```powershell
-python scripts/build_excel.py --rows rows.json --out "<品牌>在售产品整理.xlsx" --brand "<品牌>" --excluded "<json>"
+python "$skillDir\scripts\build_excel.py" --rows "$projectDir\rows.json" --out "$projectDir\<品牌>在售产品整理.xlsx" --brand "<品牌>" --excluded "<json>"
 ```
 
 ## 5. 下载产品图
 
 ```powershell
-python scripts/download_images.py --rows rows.json --out-dir images
+python "$skillDir\scripts\download_images.py" --rows "$projectDir\rows.json" --out-dir "$projectDir\images"
 ```
 
 ## 6. 新建飞书文档 + 空白画板
+
+```powershell
+Set-Location $projectDir
+```
 
 ```powershell
 lark-cli docs +create --title "<品牌>在售产品分布图" --content '<whiteboard type="blank"></whiteboard>' --as user
@@ -77,7 +86,7 @@ lark-cli docs +create --title "<品牌>在售产品分布图" --content '<whiteb
 
 推荐使用可断点续传脚本：
 ```powershell
-python scripts/upload_to_board.py --images-dir images --board-token "<BOARD_TOKEN>" --out token_map.json
+python "$skillDir\scripts\upload_to_board.py" --images-dir "$projectDir\images" --board-token "<BOARD_TOKEN>" --out "$projectDir\token_map.json"
 ```
 
 逐张（写个 `upload.ps1` 循环）：
@@ -100,14 +109,14 @@ lark-cli docs +media-upload --file "./images/<asin>.jpg" `
 ```
 
 ```powershell
-python scripts/build_dsl.py --rows rows.json --token-map token_map.json `
+python "$skillDir\scripts\build_dsl.py" --rows .\rows.json --token-map .\token_map.json `
   --root-label "<BRAND>" --root-sub "在售产品分布 · N款" `
-  --groups groups.json --out ./diagrams/diagram.json
+  --groups .\groups.json --out .\diagrams\diagram.json
 
-npx -y "@larksuite/whiteboard-cli@^0.2.13" -i ./diagrams/diagram.json --to openapi --format json -o ./diagrams/openapi.json
+npx -y "@larksuite/whiteboard-cli@^0.2.13" -i .\diagrams\diagram.json --to openapi --format json -o .\diagrams\openapi.json
 
 lark-cli whiteboard +update --whiteboard-token "<BOARD_TOKEN>" `
-  --source "@./diagrams/openapi.json" --input_format raw --overwrite `
+  --source "@.\diagrams\openapi.json" --input_format raw --overwrite `
   --idempotent-token "<unique>=10chars" --as user
 ```
 
@@ -116,7 +125,7 @@ lark-cli whiteboard +update --whiteboard-token "<BOARD_TOKEN>" `
 ```powershell
 Start-Sleep -Seconds 25
 lark-cli whiteboard +export --whiteboard-token "<BOARD_TOKEN>" `
-  --output-type preview --output "./diagrams/live" --overwrite
+  --output-type preview --output ".\diagrams\live" --overwrite
 ```
 打开 `live.jpg` 检查。
 
@@ -127,7 +136,7 @@ lark-cli whiteboard +export --whiteboard-token "<BOARD_TOKEN>" `
 
 交付前运行工作簿校验：
 ```powershell
-python scripts/excel_formula_verify.py --xlsx "<品牌>在售产品整理.xlsx" --rows rows.json
+python "$skillDir\scripts\excel_formula_verify.py" --xlsx "$projectDir\<品牌>在售产品整理.xlsx" --rows "$projectDir\rows.json"
 ```
 无公式时退出码 4 是正常终态；退出码 2 表示工作簿、行数或明显公式错误，需要 STOP。
 
@@ -141,14 +150,14 @@ python scripts/excel_formula_verify.py --xlsx "<品牌>在售产品整理.xlsx" 
 
 ### 本地技能自动同步
 
-已配置 `scripts/auto_sync.ps1` 监听本仓库，并在文件保存后自动提交、推送到 `origin/main`。安装或恢复登录启动任务：
+已配置 `$pluginDir\scripts\auto_sync.ps1` 监听本仓库，并在文件保存后自动提交、推送到 `origin/main`。安装或恢复登录启动任务（从插件根目录执行）：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\auto_sync.ps1 -InstallTask
+powershell -NoProfile -ExecutionPolicy Bypass -File "$pluginDir\scripts\auto_sync.ps1" -InstallTask
 ```
 
 日志位于 `$env:LOCALAPPDATA\brand-product-map-auto-sync.log`。发生冲突、凭据失败或远端拒绝时，脚本只记录 `STOP`，不会 force-push、reset 或自动解决冲突；需要人工修复后再运行 `-Once`。卸载登录启动任务：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\auto_sync.ps1 -UninstallTask
+powershell -NoProfile -ExecutionPolicy Bypass -File "$pluginDir\scripts\auto_sync.ps1" -UninstallTask
 ```
