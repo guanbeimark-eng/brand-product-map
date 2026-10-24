@@ -67,3 +67,21 @@
   - 宿主没装 LibreOffice，重算跑不了。**无公式表这是正常终态**，别反复修。
 - **金额被 Excel 识别成文本**
   - openpyxl 写 `cell.number_format = '"$"#,##0.00'`；空值留 None 不要写 0。
+
+## STOP / checkpoint / 恢复
+
+- **Base resolve 或分页失败**
+  - 立即输出 `STOP`，保留 `checkpoints/base.json` 和最后一页日志；修复凭据、字段 ID 或网络后，用同一组参数重跑 `scripts/pull_base.py`。不得把失败页、空响应或缺失字段当成成功。
+- **Docs create 或 media-upload 失败**
+  - 停止后保留 document ID、图片目录和已有 `token_map.json`；不要重建文档，确认 `--parent-type whiteboard --parent-node <board_token>` 后再从未完成文件继续执行 `scripts/upload_to_board.py`。
+- **Whiteboard 转换、update 或 export 失败**
+  - 停止并保留 `diagram.json`、`openapi.json` 和预览文件；先确认目标 board token 和 token 域，再从失败步骤恢复。已有画板不得默认使用 `--overwrite`。
+- **认证、权限、CAPTCHA 或限流**
+  - STOP，不得增加重试次数或并发；修复认证/权限后从 checkpoint 恢复。
+
+## 高风险动作黑名单
+
+- 不得未经明确授权覆写、删除、移动或分享已有文档/画板。
+- 不得将 Amazon URL、Base 附件 token 或其他域的 file token 直接写入 whiteboard `image.src`。
+- 不得凭品牌名猜测 Base、字段、产品、销量或历史值；不得把缺失值填成 0。
+- 不得在目标文档、画板或 token 映射未核对时执行任何远程写入。
